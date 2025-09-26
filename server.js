@@ -1,58 +1,86 @@
-const net = require('net');
-const express = require('express');
-const mongoose = require('mongoose');
-const bodyParser = require('body-parser');
-require('dotenv').config(); 
-
-mongoose.connect(process.env.MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-})
-.then(() => console.log("Connected to MongoDB Atlas"))
-.catch(err => console.error("MongoDB connection error:", err));
-
-// Schema & model
-const sensorSchema = new mongoose.Schema({
-  location: String,
-  timestamp: Date,
-  temperature: Number,
-  wind_speed: Number,
-  rainfall: Number
-});
-const SensorReading = mongoose.model('SensorReading', sensorSchema);
+require("dotenv").config();
+const express = require("express");
+const mongoose = require("mongoose");
+const cors = require("cors");
+const net = require("net");
 
 const app = express();
-app.use(bodyParser.json());
+const PORT = process.env.PORT || 3000;       // REST API
+const TCP_PORT = process.env.TCP_PORT || 5000; // TCP server for sensors
 
-// TCP server to receive sensor data
+app.use(cors());
+app.use(express.json());
+
+// MongoDB connection
+mongoose.connect(process.env.MONGODB_URI || "mongodb://localhost:27017/iotdb", {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+})
+.then(() => console.log("Connected to MongoDB"))
+.catch(err => console.error("MongoDB connection error:", err));
+
+// Schemas
+const readingSchema = new mongoose.Schema({
+    location: String,
+    timestamp: { type: Date, default: Date.now },
+    temperature: Number,
+    wind_speed: Number,
+    rainfall: Number,
+});
+
+const alertSchema = new mongoose.Schema({
+    location: String,
+    message: String,
+    timestamp: { type: Date, default: Date.now },
+});
+
+const Reading = mongoose.model("Reading", readingSchema);
+const Alert = mongoose.model("Alert", alertSchema);
+
+// TCP Server (sensor input)
 const tcpServer = net.createServer(socket => {
-  socket.on('data', async (data) => {
+    console.log("Sensor connected");
+
+    socket.on("data", async data => {
+        try {
+            const reading = JSON.parse(data.toString());
+            const newReading = new Reading(reading);
+            await newReading.save();
+            console.log("Saved reading:", reading);
+        } catch (err) {
+            console.error("Error saving reading:", err.message);
+        }
+    });
+
+    socket.on("end", () => console.log("Sensor disconnected"));
+});
+
+tcpServer.listen(TCP_PORT, "0.0.0.0", () => {
+    console.log(`TCP Server running on port ${TCP_PORT}`);
+});
+
+// REST API routes
+app.get("/api/readings", async (req, res) => {
     try {
-      const reading = JSON.parse(data.toString());
-      console.log("Received:", reading);
-      const newReading = new SensorReading(reading);
-      await newReading.save();
+        const readings = await Reading.find().sort({ timestamp: -1 }).limit(50);
+        res.json(readings);
     } catch (err) {
-      console.error("Invalid data:", data.toString());
+        res.status(500).json({ error: "Failed to fetch readings" });
     }
-  });
-});
-tcpServer.listen(5000, () => console.log("TCP Server running on port 5000"));
-
-// REST API to fetch readings
-app.get('/api/readings', async (req, res) => {
-  try {
-    const readings = await SensorReading.find().sort({ timestamp: -1 }).limit(100);
-    res.json(readings);
-  } catch (err) {
-    res.status(500).json({ error: "Failed to fetch readings" });
-  }
 });
 
-// REST API to receive alerts
-app.post('/api/alerts', (req, res) => {
-  console.log("Alert received:", req.body);
-  res.status(201).json({ message: "Alert received", alert: req.body });
+app.post("/api/alerts", async (req, res) => {
+    try {
+        const alert = new Alert(req.body);
+        await alert.save();
+        console.log("Alert received:", req.body);
+        res.json({ message: "Alert saved", alert });
+    } catch (err) {
+        res.status(500).json({ error: "Failed to save alert" });
+    }
 });
 
-app.listen(3000, () => console.log("REST API running on port 3000"));
+// Start REST API
+app.listen(PORT, "0.0.0.0", () => {
+    console.log(`REST API running on port ${PORT}`);
+});
