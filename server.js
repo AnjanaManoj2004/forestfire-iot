@@ -2,14 +2,16 @@ const net = require('net');
 const express = require('express');
 const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
+require('dotenv').config(); 
 
-mongoose.connect(
-  "mongodb+srv://s223483467:3vjw2CM70qs60C8G@sit314.9yz5y4g.mongodb.net/module3?retryWrites=true&w=majority&appName=sit314",
-  { useNewUrlParser: true, useUnifiedTopology: true }
-)
+mongoose.connect(process.env.MONGODB_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+})
 .then(() => console.log("Connected to MongoDB Atlas"))
 .catch(err => console.error("MongoDB connection error:", err));
 
+// Schema & model
 const sensorSchema = new mongoose.Schema({
   location: String,
   timestamp: Date,
@@ -22,7 +24,7 @@ const SensorReading = mongoose.model('SensorReading', sensorSchema);
 const app = express();
 app.use(bodyParser.json());
 
-// TCP server
+// TCP server to receive sensor data
 const tcpServer = net.createServer(socket => {
   socket.on('data', async (data) => {
     try {
@@ -37,7 +39,7 @@ const tcpServer = net.createServer(socket => {
 });
 tcpServer.listen(5000, () => console.log("TCP Server running on port 5000"));
 
-// REST API
+// REST API to fetch readings
 app.get('/api/readings', async (req, res) => {
   try {
     const readings = await SensorReading.find().sort({ timestamp: -1 }).limit(100);
@@ -47,6 +49,7 @@ app.get('/api/readings', async (req, res) => {
   }
 });
 
+// REST API to receive alerts
 app.post('/api/alerts', (req, res) => {
   console.log("Alert received:", req.body);
   res.status(201).json({ message: "Alert received", alert: req.body });
